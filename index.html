@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="lt">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouTube Tab Vault</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-wrap">
+        <div class="yt-mark" aria-hidden="true">
+          <span class="play-triangle"></span>
+        </div>
+        <div>
+          <h1>YouTube Tab Vault</h1>
+          <p>Tavo video skirtukai, kategorijos ir aprasymai vienoje vietoje.</p>
+        </div>
+      </div>
+      <div class="topbar-tools">
+        <input
+          id="globalSearch"
+          type="search"
+          placeholder="Paieska: pavadinimas, kanalas, aprasas..."
+        />
+        <select id="sortSelect" aria-label="Rusiavimas">
+          <option value="newest">Naujausi</option>
+          <option value="oldest">Seniausi</option>
+          <option value="title">Pavadinimas A-Z</option>
+          <option value="channel">Kanalas A-Z</option>
+        </select>
+      </div>
+    </header>
+
+    <main class="app-layout">
+      <aside class="sidebar card">
+        <h2>Kategorijos</h2>
+        <button id="newCategoryBtn" class="btn ghost" type="button">
+          + Nauja kategorija
+        </button>
+        <nav id="categoryNav" class="category-nav" aria-label="Kategorijos"></nav>
+        <p class="mini-tip">
+          Patarimas: naudok pvz. `Mokymasis`, `Biznis`, `Idejos`, `Pramogos`.
+        </p>
+      </aside>
+
+      <section class="content-col">
+        <section class="card composer">
+          <h2>Prideti YouTube nuoroda</h2>
+          <form id="entryForm" autocomplete="off">
+            <div class="grid">
+              <label class="full">
+                YouTube URL
+                <input
+                  id="urlInput"
+                  type="url"
+                  required
+                  placeholder="https://www.youtube.com/watch?v=..."
+                />
+              </label>
+              <label>
+                Pavadinimas
+                <input
+                  id="titleInput"
+                  type="text"
+                  placeholder="Jei tuscia, bandys paimti automatiskai"
+                />
+              </label>
+              <label>
+                Kanalas
+                <input id="channelInput" type="text" placeholder="Auto arba ranka" />
+              </label>
+              <label>
+                Kategorija
+                <input
+                  id="categoryInput"
+                  type="text"
+                  list="categoryOptions"
+                  placeholder="Mokymasis"
+                />
+              </label>
+              <label>
+                Zymes (kableliais)
+                <input id="tagsInput" type="text" placeholder="ai, marketing, growth" />
+              </label>
+              <label>
+                Kada perziureti
+                <input id="watchDateInput" type="date" />
+              </label>
+              <label class="watch-check">
+                <span>Perziurejimo statusas</span>
+                <span class="checkbox-line">
+                  <input id="watchedInput" type="checkbox" />
+                  <span>Jau perziuretas</span>
+                </span>
+              </label>
+              <label class="full">
+                Aprasymas / ka ten rasi
+                <textarea
+                  id="descriptionInput"
+                  rows="3"
+                  placeholder="Trumpai: kodel verta ziureti, kokia nauda..."
+                ></textarea>
+              </label>
+              <label class="full">
+                Uzrasai
+                <textarea
+                  id="notesInput"
+                  rows="3"
+                  placeholder="Tavo mintys po perziuros, idejos, TODO..."
+                ></textarea>
+              </label>
+            </div>
+            <datalist id="categoryOptions"></datalist>
+            <div class="row-actions">
+              <button id="saveBtn" class="btn" type="submit">Issaugoti</button>
+              <button id="autoInfoBtn" class="btn ghost" type="button">
+                Auto paimti info is URL
+              </button>
+              <button id="cancelEditBtn" class="btn danger hidden" type="button">
+                Atsaukti redagavima
+              </button>
+            </div>
+            <p id="formStatus" class="status" aria-live="polite"></p>
+          </form>
+        </section>
+
+        <section class="card tools">
+          <h2>Valdymas</h2>
+          <div class="row-actions wrap">
+            <button id="exportBtn" class="btn ghost" type="button">
+              Eksportuoti JSON
+            </button>
+            <label class="btn ghost file-btn">
+              Importuoti JSON
+              <input id="importInput" type="file" accept=".json,application/json" />
+            </label>
+            <button id="clearBtn" class="btn danger" type="button">
+              Isvalyti viska
+            </button>
+          </div>
+          <p id="toolsStatus" class="status" aria-live="polite"></p>
+          <div class="stats">
+            <article>
+              <strong id="statAll">0</strong>
+              <span>Viso</span>
+            </article>
+            <article>
+              <strong id="statVisible">0</strong>
+              <span>Matoma</span>
+            </article>
+            <article>
+              <strong id="statCategories">0</strong>
+              <span>Kategoriju</span>
+            </article>
+            <article>
+              <strong id="statWatched">0</strong>
+              <span>Perziureta</span>
+            </article>
+          </div>
+        </section>
+
+        <section id="viewerCard" class="card viewer">
+          <header class="viewer-head">
+            <h2>Perziura ir konspektas</h2>
+            <p id="viewerTitle" class="viewer-subtitle">
+              Pasirink video is saraso ir ziurek cia.
+            </p>
+          </header>
+          <div class="viewer-layout">
+            <article class="player-col">
+              <div class="player-wrap">
+                <iframe
+                  id="videoFrame"
+                  title="Video perziura"
+                  loading="lazy"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowfullscreen
+                ></iframe>
+              </div>
+              <div class="row-actions wrap">
+                <button id="viewerOpenExternalBtn" class="btn ghost" type="button">
+                  Atidaryti naujame skirtuke
+                </button>
+                <button id="viewerToggleWatchedBtn" class="btn" type="button">
+                  Pazymeti perziuretu
+                </button>
+              </div>
+            </article>
+            <article class="notes-col">
+              <label class="full">
+                Konspektas / uzrasai
+                <textarea
+                  id="viewerNotesInput"
+                  rows="10"
+                  placeholder="Rasyk mintis kol ziuri video..."
+                ></textarea>
+              </label>
+              <div class="row-actions wrap">
+                <button id="viewerSaveNotesBtn" class="btn" type="button">
+                  Issaugoti uzrasus
+                </button>
+              </div>
+              <p id="viewerStatus" class="status" aria-live="polite"></p>
+            </article>
+          </div>
+        </section>
+
+        <section id="board" class="board" aria-live="polite"></section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
