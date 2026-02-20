@@ -19,6 +19,7 @@
 
   async function init() {
     cacheRefs();
+    handleCloudAuthReturnError();
     const migratedCount = tryMigrateLegacyLocalData();
     bindEvents();
     hydrateControls();
@@ -560,7 +561,7 @@
 
     setStatus(
       refs.toolsStatus,
-      "DB sukonfiguruota. Dabar spausk Login.",
+      "DB sukonfiguruota. Dabar spausk Google.",
       "success"
     );
   }
@@ -588,10 +589,68 @@
     if (error) {
       setStatus(
         refs.toolsStatus,
-        `Google prisijungimas nepavyko: ${error.message}`,
+        toFriendlyCloudError(error.message, error.code),
         "error"
       );
       return;
+    }
+  }
+
+  function handleCloudAuthReturnError() {
+    const search = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+
+    const errorCode =
+      search.get("error_code") ||
+      hash.get("error_code") ||
+      search.get("error") ||
+      hash.get("error");
+
+    const errorMessage =
+      search.get("error_description") ||
+      hash.get("error_description") ||
+      search.get("msg") ||
+      hash.get("msg");
+
+    if (!errorCode && !errorMessage) return;
+
+    setStatus(
+      refs.toolsStatus,
+      toFriendlyCloudError(errorMessage || "OAuth klaida.", errorCode || ""),
+      "error"
+    );
+
+    const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, "", cleanUrl);
+  }
+
+  function toFriendlyCloudError(message, code) {
+    const msg = String(message || "");
+    const errorCode = String(code || "").toLowerCase();
+    const lower = msg.toLowerCase();
+
+    if (
+      errorCode.includes("validation_failed") ||
+      lower.includes("unsupported provider") ||
+      lower.includes("provider is not enabled")
+    ) {
+      const projectRef = extractProjectRef(cloud.config?.url || "");
+      const providerUrl = projectRef
+        ? `https://supabase.com/dashboard/project/${projectRef}/auth/providers`
+        : "Supabase Dashboard -> Authentication -> Providers";
+      return `Google provider neijungtas. Eik i ${providerUrl}, ijunk Google ir issaugok.`;
+    }
+
+    return `Google prisijungimas nepavyko: ${msg || "nezinoma klaida"}`;
+  }
+
+  function extractProjectRef(projectUrl) {
+    try {
+      const host = new URL(projectUrl).hostname;
+      const match = host.match(/^([a-z0-9-]+)\.supabase\.co$/i);
+      return match ? match[1] : "";
+    } catch {
+      return "";
     }
   }
 
