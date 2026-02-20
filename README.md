@@ -11,7 +11,11 @@ YouTube nuorodu valdymas su kategorijomis, planavimo datomis, perziuros statusu 
 ## Supabase Free DB (naudoti visur)
 
 1. Susikurk Supabase projekta (free).
-2. SQL Editor paleisk:
+2. `Authentication -> Providers -> Google` ijunk Google provider.
+3. `Authentication -> URL Configuration` i `Redirect URLs` pridiek:
+   - `https://andrius314.github.io/youtube-tab-vault/`
+   - (pasirinktinai testui) `https://andrius314.github.io/bandymas3/youtube-tab-vault/`
+4. SQL Editor paleisk:
 
 ```sql
 create table if not exists public.vault_states (
@@ -39,6 +43,6 @@ using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 ```
 
-3. App'e virsuje spausk `DB`, ivesk `Project URL` ir `Anon Key`.
-4. Spausk `Login` ir prisijunk (arba susikurk paskyra).
-5. Po prisijungimo duomenys sinchronizuojami i DB.
+5. App'e virsuje spausk `DB`, ivesk `Project URL` ir `Anon Key`.
+6. Spausk `Google` ir prisijunk vienu paspaudimu.
+7. Po prisijungimo duomenys sinchronizuojami i DB.

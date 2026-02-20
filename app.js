@@ -1,6 +1,7 @@
 (() => {
   const STORAGE_KEY = "youtubeTabVault.v1";
   const CLOUD_CONFIG_KEY = "youtubeTabVault.supabase.v1";
+  const LEGACY_MIGRATION_KEY = "youtubeTabVault.legacyMigrated.v1";
   const DEFAULT_CATEGORY = "Be kategorijos";
   const SORT_OPTIONS = ["newest", "oldest", "title", "channel"];
   const CLOUD_SYNC_DELAY_MS = 900;
@@ -18,11 +19,19 @@
 
   async function init() {
     cacheRefs();
+    const migratedCount = tryMigrateLegacyLocalData();
     bindEvents();
     hydrateControls();
     renderAll();
     await initCloud();
     renderCloudStatus();
+    if (migratedCount > 0) {
+      setStatus(
+        refs.toolsStatus,
+        `Atkurta ${migratedCount} irasu is ankstesnes versijos local duomenu.`,
+        "success"
+      );
+    }
   }
 
   function cacheRefs() {
@@ -525,6 +534,7 @@
 
     if (cloud.user) {
       await pullCloudState();
+      await pushCloudState();
     }
   }
 
@@ -569,69 +579,20 @@
       return;
     }
 
-    const email = cleanText(prompt("El. pastas:", "") || "");
-    if (!email) return;
-    const password = prompt("Slaptazodis:", "") || "";
-    if (!password) return;
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const { error } = await cloud.client.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
 
-    let signInError = null;
-    try {
-      const { error } = await cloud.client.auth.signInWithPassword({ email, password });
-      signInError = error || null;
-    } catch (error) {
-      signInError = error;
-    }
-
-    if (signInError) {
-      const createNew = confirm(
-        "Prisijungti nepavyko. Sukurti nauja paskyra su siuo email?"
+    if (error) {
+      setStatus(
+        refs.toolsStatus,
+        `Google prisijungimas nepavyko: ${error.message}`,
+        "error"
       );
-      if (!createNew) {
-        setStatus(refs.toolsStatus, "Prisijungimas nutrauktas.", "error");
-        return;
-      }
-
-      const { error: signUpError } = await cloud.client.auth.signUp({
-        email,
-        password,
-      });
-      if (signUpError) {
-        setStatus(
-          refs.toolsStatus,
-          `Registracija nepavyko: ${signUpError.message}`,
-          "error"
-        );
-        return;
-      }
-
-      const { error: secondTryError } = await cloud.client.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (secondTryError) {
-        setStatus(
-          refs.toolsStatus,
-          `Prisijungimas nepavyko: ${secondTryError.message}`,
-          "error"
-        );
-        return;
-      }
-    }
-
-    const {
-      data: { session },
-    } = await cloud.client.auth.getSession();
-    cloud.user = session?.user || null;
-
-    if (!cloud.user) {
-      setStatus(refs.toolsStatus, "Prisijungimas nepavyko.", "error");
       return;
     }
-
-    await pullCloudState();
-    await pushCloudState();
-    renderCloudStatus();
-    setStatus(refs.toolsStatus, "Prisijungta ir susinchronizuota.", "success");
   }
 
   async function onCloudSyncNow() {
@@ -711,7 +672,7 @@
 
     if (!cloud.user) {
       refs.cloudStatus.textContent = "DB: Configured";
-      refs.cloudAuthBtn.textContent = "Login";
+      refs.cloudAuthBtn.textContent = "Google";
       refs.cloudSyncBtn.disabled = true;
       return;
     }
@@ -1340,6 +1301,89 @@
       localState.settings.currentEntryId || cloudState.settings.currentEntryId || "";
 
     return sanitizeState(merged);
+  }
+
+  function tryMigrateLegacyLocalData() {
+    try {
+      if (localStorage.getItem(LEGACY_MIGRATION_KEY) === "1") return 0;
+
+      const legacyRaw = localStorage.getItem("tabVaultState.v1");
+      if (!legacyRaw) {
+        localStorage.setItem(LEGACY_MIGRATION_KEY, "1");
+        return 0;
+      }
+
+      const parsed = JSON.parse(legacyRaw);
+      const legacyTabs = Array.isArray(parsed?.tabs) ? parsed.tabs : [];
+      if (!legacyTabs.length) {
+        localStorage.setItem(LEGACY_MIGRATION_KEY, "1");
+        return 0;
+      }
+
+      const legacyEntries = legacyTabs
+        .map((tab) => ({
+          id: cleanText(tab.id) || makeId(),
+          url: tab.url,
+          title: tab.title,
+          channel: tab.channel || "",
+          category: tab.category || tab.group || DEFAULT_CATEGORY,
+          tags: tab.tags || [],
+          watchDate: tab.watchDate || "",
+          watched: !!tab.watched,
+          watchedAt: tab.watchedAt || "",
+          description: tab.description || tab.notes || "",
+          notes: tab.notes || "",
+          addedAt: tab.createdAt || tab.addedAt,
+          updatedAt: tab.updatedAt,
+          type: tab.videoId ? "youtube" : "",
+          videoId: tab.videoId || "",
+          thumbnail: tab.thumbnail || "",
+        }))
+        .map(sanitizeEntry)
+        .filter(Boolean);
+
+      if (!legacyEntries.length) {
+        localStorage.setItem(LEGACY_MIGRATION_KEY, "1");
+        return 0;
+      }
+
+      const mergedByKey = new Map();
+      [...state.entries, ...legacyEntries].forEach((entry) => {
+        const key = `${normalizeCategory(entry.category)}|${canonicalUrl(entry.url)}`;
+        const existing = mergedByKey.get(key);
+        if (!existing) {
+          mergedByKey.set(key, entry);
+          return;
+        }
+        const oldTime = new Date(existing.updatedAt).getTime();
+        const newTime = new Date(entry.updatedAt).getTime();
+        if (newTime >= oldTime) mergedByKey.set(key, entry);
+      });
+
+      state.entries = Array.from(mergedByKey.values());
+      state.categories = dedupe([
+        ...state.categories,
+        ...legacyEntries.map((entry) => entry.category),
+      ]);
+      ensureDefaultCategory(state);
+
+      persistLocalOnly();
+      localStorage.setItem(LEGACY_MIGRATION_KEY, "1");
+      return legacyEntries.length;
+    } catch {
+      return 0;
+    }
+  }
+
+  function canonicalUrl(url) {
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname.replace(/^www\./, "");
+      const path = parsed.pathname.replace(/\/$/, "");
+      return `${host}${path}${parsed.search}`.toLowerCase();
+    } catch {
+      return String(url || "").toLowerCase();
+    }
   }
 
   function defaultState() {
