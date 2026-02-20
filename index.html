@@ -29,6 +29,18 @@
           <option value="title">Pavadinimas A-Z</option>
           <option value="channel">Kanalas A-Z</option>
         </select>
+        <div class="cloud-tools">
+          <span id="cloudStatus" class="cloud-status">DB: Local</span>
+          <button id="cloudConfigBtn" class="btn ghost tiny" type="button">
+            DB
+          </button>
+          <button id="cloudAuthBtn" class="btn ghost tiny" type="button">
+            Login
+          </button>
+          <button id="cloudSyncBtn" class="btn ghost tiny" type="button">
+            Sync
+          </button>
+        </div>
       </div>
     </header>
 
@@ -210,6 +222,7 @@
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./app.js"></script>
   </body>
 </html>

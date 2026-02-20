@@ -1,22 +1,37 @@
 (() => {
   const STORAGE_KEY = "youtubeTabVault.v1";
+  const CLOUD_CONFIG_KEY = "youtubeTabVault.supabase.v1";
   const DEFAULT_CATEGORY = "Be kategorijos";
   const SORT_OPTIONS = ["newest", "oldest", "title", "channel"];
+  const CLOUD_SYNC_DELAY_MS = 900;
 
   const refs = {};
   let state = loadState();
   let editingId = null;
+  let cloudSyncTimer = null;
+  const cloud = {
+    client: null,
+    config: null,
+    user: null,
+    syncing: false,
+  };
 
-  function init() {
+  async function init() {
     cacheRefs();
     bindEvents();
     hydrateControls();
     renderAll();
+    await initCloud();
+    renderCloudStatus();
   }
 
   function cacheRefs() {
     refs.globalSearch = document.getElementById("globalSearch");
     refs.sortSelect = document.getElementById("sortSelect");
+    refs.cloudStatus = document.getElementById("cloudStatus");
+    refs.cloudConfigBtn = document.getElementById("cloudConfigBtn");
+    refs.cloudAuthBtn = document.getElementById("cloudAuthBtn");
+    refs.cloudSyncBtn = document.getElementById("cloudSyncBtn");
 
     refs.categoryNav = document.getElementById("categoryNav");
     refs.newCategoryBtn = document.getElementById("newCategoryBtn");
@@ -88,6 +103,10 @@
     refs.viewerOpenExternalBtn.addEventListener("click", onViewerOpenExternal);
     refs.viewerToggleWatchedBtn.addEventListener("click", onViewerToggleWatched);
     refs.viewerSaveNotesBtn.addEventListener("click", onViewerSaveNotes);
+
+    refs.cloudConfigBtn.addEventListener("click", onCloudConfigure);
+    refs.cloudAuthBtn.addEventListener("click", onCloudAuth);
+    refs.cloudSyncBtn.addEventListener("click", onCloudSyncNow);
   }
 
   function hydrateControls() {
@@ -485,6 +504,223 @@
     return entry.url;
   }
 
+  async function initCloud() {
+    if (!window.supabase || !window.supabase.createClient) return;
+
+    const config = loadCloudConfig();
+    if (!config) return;
+
+    cloud.config = config;
+    cloud.client = window.supabase.createClient(config.url, config.anonKey);
+
+    const {
+      data: { session },
+    } = await cloud.client.auth.getSession();
+    cloud.user = session?.user || null;
+
+    cloud.client.auth.onAuthStateChange((_event, sessionState) => {
+      cloud.user = sessionState?.user || null;
+      renderCloudStatus();
+    });
+
+    if (cloud.user) {
+      await pullCloudState();
+    }
+  }
+
+  async function onCloudConfigure() {
+    if (!window.supabase || !window.supabase.createClient) {
+      setStatus(refs.toolsStatus, "Supabase biblioteka neuzsikrove.", "error");
+      return;
+    }
+
+    const currentUrl = cloud.config?.url || "";
+    const currentKey = cloud.config?.anonKey || "";
+
+    const url = cleanText(prompt("Supabase Project URL:", currentUrl) || "");
+    if (!url) return;
+    const anonKey = cleanText(prompt("Supabase Anon Key:", currentKey) || "");
+    if (!anonKey) return;
+
+    saveCloudConfig({ url, anonKey });
+    cloud.config = { url, anonKey };
+    cloud.client = window.supabase.createClient(url, anonKey);
+    cloud.user = null;
+    renderCloudStatus();
+
+    setStatus(
+      refs.toolsStatus,
+      "DB sukonfiguruota. Dabar spausk Login.",
+      "success"
+    );
+  }
+
+  async function onCloudAuth() {
+    if (!cloud.client) {
+      setStatus(refs.toolsStatus, "Pirmiausia sukonfiguruok DB.", "error");
+      return;
+    }
+
+    if (cloud.user) {
+      await cloud.client.auth.signOut();
+      cloud.user = null;
+      renderCloudStatus();
+      setStatus(refs.toolsStatus, "Atsijungta nuo DB.", "success");
+      return;
+    }
+
+    const email = cleanText(prompt("El. pastas:", "") || "");
+    if (!email) return;
+    const password = prompt("Slaptazodis:", "") || "";
+    if (!password) return;
+
+    let signInError = null;
+    try {
+      const { error } = await cloud.client.auth.signInWithPassword({ email, password });
+      signInError = error || null;
+    } catch (error) {
+      signInError = error;
+    }
+
+    if (signInError) {
+      const createNew = confirm(
+        "Prisijungti nepavyko. Sukurti nauja paskyra su siuo email?"
+      );
+      if (!createNew) {
+        setStatus(refs.toolsStatus, "Prisijungimas nutrauktas.", "error");
+        return;
+      }
+
+      const { error: signUpError } = await cloud.client.auth.signUp({
+        email,
+        password,
+      });
+      if (signUpError) {
+        setStatus(
+          refs.toolsStatus,
+          `Registracija nepavyko: ${signUpError.message}`,
+          "error"
+        );
+        return;
+      }
+
+      const { error: secondTryError } = await cloud.client.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (secondTryError) {
+        setStatus(
+          refs.toolsStatus,
+          `Prisijungimas nepavyko: ${secondTryError.message}`,
+          "error"
+        );
+        return;
+      }
+    }
+
+    const {
+      data: { session },
+    } = await cloud.client.auth.getSession();
+    cloud.user = session?.user || null;
+
+    if (!cloud.user) {
+      setStatus(refs.toolsStatus, "Prisijungimas nepavyko.", "error");
+      return;
+    }
+
+    await pullCloudState();
+    await pushCloudState();
+    renderCloudStatus();
+    setStatus(refs.toolsStatus, "Prisijungta ir susinchronizuota.", "success");
+  }
+
+  async function onCloudSyncNow() {
+    if (!cloud.client || !cloud.user) {
+      setStatus(refs.toolsStatus, "DB neaktyvi arba neprisijungta.", "error");
+      return;
+    }
+
+    await pushCloudState();
+    setStatus(refs.toolsStatus, "Sinchronizacija baigta.", "success");
+  }
+
+  async function pullCloudState() {
+    if (!cloud.client || !cloud.user) return;
+
+    const { data, error } = await cloud.client
+      .from("vault_states")
+      .select("payload")
+      .eq("user_id", cloud.user.id)
+      .maybeSingle();
+
+    if (error) return;
+    if (!data || !data.payload || !data.payload.state) return;
+
+    const cloudState = sanitizeState(data.payload.state);
+    state = mergeStates(state, cloudState);
+    persistLocalOnly();
+    renderAll();
+  }
+
+  async function pushCloudState() {
+    if (!cloud.client || !cloud.user) return;
+    if (cloud.syncing) return;
+
+    cloud.syncing = true;
+    renderCloudStatus();
+
+    const payload = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      state,
+    };
+
+    const { error } = await cloud.client.from("vault_states").upsert(
+      {
+        user_id: cloud.user.id,
+        payload,
+      },
+      { onConflict: "user_id" }
+    );
+
+    cloud.syncing = false;
+    renderCloudStatus();
+
+    if (error) {
+      setStatus(refs.toolsStatus, `DB sync klaida: ${error.message}`, "error");
+    }
+  }
+
+  function scheduleCloudSync() {
+    if (!cloud.client || !cloud.user) return;
+    if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = setTimeout(() => {
+      pushCloudState();
+    }, CLOUD_SYNC_DELAY_MS);
+  }
+
+  function renderCloudStatus() {
+    if (!refs.cloudStatus) return;
+
+    if (!cloud.client) {
+      refs.cloudStatus.textContent = "DB: Local";
+      refs.cloudAuthBtn.textContent = "Login";
+      refs.cloudSyncBtn.disabled = true;
+      return;
+    }
+
+    if (!cloud.user) {
+      refs.cloudStatus.textContent = "DB: Configured";
+      refs.cloudAuthBtn.textContent = "Login";
+      refs.cloudSyncBtn.disabled = true;
+      return;
+    }
+
+    refs.cloudStatus.textContent = cloud.syncing ? "DB: Syncing..." : "DB: Connected";
+    refs.cloudAuthBtn.textContent = "Logout";
+    refs.cloudSyncBtn.disabled = false;
+  }
+
   function renderAll() {
     ensureValidState();
     renderCategoryNav();
@@ -492,6 +728,7 @@
     renderStats();
     renderBoard();
     renderViewer();
+    renderCloudStatus();
   }
 
   function renderCategoryNav() {
@@ -896,6 +1133,11 @@
   }
 
   function persist() {
+    persistLocalOnly();
+    scheduleCloudSync();
+  }
+
+  function persistLocalOnly() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }
 
@@ -906,6 +1148,24 @@
       return sanitizeState(JSON.parse(raw));
     } catch {
       return defaultState();
+    }
+  }
+
+  function saveCloudConfig(config) {
+    localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(config));
+  }
+
+  function loadCloudConfig() {
+    try {
+      const raw = localStorage.getItem(CLOUD_CONFIG_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const url = cleanText(parsed.url);
+      const anonKey = cleanText(parsed.anonKey);
+      if (!url || !anonKey) return null;
+      return { url, anonKey };
+    } catch {
+      return null;
     }
   }
 
@@ -1041,6 +1301,45 @@
 
   function dedupe(list) {
     return Array.from(new Set(list));
+  }
+
+  function mergeStates(localState, cloudState) {
+    const merged = defaultState();
+
+    const byKey = new Map();
+    [...localState.entries, ...cloudState.entries].forEach((entry) => {
+      const key = cleanText(entry.id) || `${entry.url}|${entry.category}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, entry);
+        return;
+      }
+
+      const existingTime = new Date(existing.updatedAt).getTime();
+      const nextTime = new Date(entry.updatedAt).getTime();
+      if (nextTime >= existingTime) {
+        byKey.set(key, entry);
+      }
+    });
+
+    merged.entries = Array.from(byKey.values())
+      .map(sanitizeEntry)
+      .filter(Boolean);
+
+    merged.categories = dedupe([
+      ...localState.categories,
+      ...cloudState.categories,
+      ...merged.entries.map((item) => item.category),
+    ]).map(normalizeCategory);
+    ensureDefaultCategory(merged);
+
+    merged.settings.query = localState.settings.query;
+    merged.settings.sort = localState.settings.sort;
+    merged.settings.activeCategory = localState.settings.activeCategory;
+    merged.settings.currentEntryId =
+      localState.settings.currentEntryId || cloudState.settings.currentEntryId || "";
+
+    return sanitizeState(merged);
   }
 
   function defaultState() {

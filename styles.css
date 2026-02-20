@@ -88,7 +88,7 @@ p {
   gap: 10px;
   align-items: center;
   min-width: 320px;
-  width: min(50vw, 620px);
+  width: min(70vw, 900px);
 }
 
 input,
@@ -254,6 +254,28 @@ label.full {
   color: #ffeaea;
   background: #5a2020;
   border: 1px solid #834040;
+}
+
+.btn.tiny {
+  padding: 7px 9px;
+  font-size: 0.75rem;
+}
+
+.cloud-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #171717;
+  flex: 0 0 auto;
+}
+
+.cloud-status {
+  font-size: 0.76rem;
+  color: #d0d0d0;
+  min-width: 108px;
 }
 
 .file-btn {
@@ -566,6 +588,14 @@ label.full {
   .topbar-tools {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .cloud-tools {
+    justify-content: space-between;
+  }
+
+  .cloud-status {
+    min-width: 0;
   }
 
   .video-grid {
