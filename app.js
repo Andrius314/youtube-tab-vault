@@ -2,6 +2,10 @@
   const STORAGE_KEY = "youtubeTabVault.v1";
   const CLOUD_CONFIG_KEY = "youtubeTabVault.supabase.v1";
   const LEGACY_MIGRATION_KEY = "youtubeTabVault.legacyMigrated.v1";
+  const DEFAULT_CLOUD_CONFIG = {
+    url: "https://aykytcqihvxwhvywedpm.supabase.co",
+    anonKey: "sb_publishable_jFa2Ri2_-7GWB37l9DFeMg_2wm7qWY4",
+  };
   const DEFAULT_CATEGORY = "Be kategorijos";
   const SORT_OPTIONS = ["newest", "oldest", "title", "channel"];
   const CLOUD_SYNC_DELAY_MS = 900;
@@ -15,11 +19,11 @@
     config: null,
     user: null,
     syncing: false,
+    authSubscription: null,
   };
 
   async function init() {
     cacheRefs();
-    handleCloudAuthReturnError();
     const migratedCount = tryMigrateLegacyLocalData();
     bindEvents();
     hydrateControls();
@@ -517,26 +521,75 @@
   async function initCloud() {
     if (!window.supabase || !window.supabase.createClient) return;
 
-    const config = loadCloudConfig();
-    if (!config) return;
+    const config = loadCloudConfig() || DEFAULT_CLOUD_CONFIG;
+    await connectCloud(config, false);
+  }
 
-    cloud.config = config;
-    cloud.client = window.supabase.createClient(config.url, config.anonKey);
+  async function connectCloud(config, saveOverride) {
+    const safeConfig = sanitizeCloudConfig(config);
+    if (!safeConfig) return false;
 
-    const {
-      data: { session },
-    } = await cloud.client.auth.getSession();
-    cloud.user = session?.user || null;
+    if (saveOverride) {
+      saveCloudConfig(safeConfig);
+    }
 
-    cloud.client.auth.onAuthStateChange((_event, sessionState) => {
+    cloud.config = safeConfig;
+    cloud.client = window.supabase.createClient(safeConfig.url, safeConfig.anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
+    cloud.user = null;
+
+    if (cloud.authSubscription && typeof cloud.authSubscription.unsubscribe === "function") {
+      cloud.authSubscription.unsubscribe();
+      cloud.authSubscription = null;
+    }
+
+    const { data: authListener } = cloud.client.auth.onAuthStateChange((_event, sessionState) => {
       cloud.user = sessionState?.user || null;
       renderCloudStatus();
     });
+    cloud.authSubscription = authListener?.subscription || null;
 
-    if (cloud.user) {
-      await pullCloudState();
-      await pushCloudState();
+    const connected = await ensureCloudSession();
+    renderCloudStatus();
+    if (!connected) return false;
+
+    await pullCloudState();
+    await pushCloudState();
+    return true;
+  }
+
+  async function ensureCloudSession() {
+    if (!cloud.client) return false;
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await cloud.client.auth.getSession();
+
+    if (sessionError) {
+      setStatus(refs.toolsStatus, `DB sesijos klaida: ${sessionError.message}`, "error");
+      return false;
     }
+
+    if (session?.user) {
+      cloud.user = session.user;
+      return true;
+    }
+
+    const { data, error } = await cloud.client.auth.signInAnonymously();
+    if (error) {
+      cloud.user = null;
+      setStatus(refs.toolsStatus, toFriendlyAnonError(error), "error");
+      return false;
+    }
+
+    cloud.user = data?.user || data?.session?.user || null;
+    return !!cloud.user;
   }
 
   async function onCloudConfigure() {
@@ -545,103 +598,56 @@
       return;
     }
 
-    const currentUrl = cloud.config?.url || "";
-    const currentKey = cloud.config?.anonKey || "";
+    const currentUrl = cloud.config?.url || DEFAULT_CLOUD_CONFIG.url;
+    const currentKey = cloud.config?.anonKey || DEFAULT_CLOUD_CONFIG.anonKey;
 
     const url = cleanText(prompt("Supabase Project URL:", currentUrl) || "");
     if (!url) return;
-    const anonKey = cleanText(prompt("Supabase Anon Key:", currentKey) || "");
+    const anonKey = cleanText(prompt("Supabase Publishable (arba Anon) Key:", currentKey) || "");
     if (!anonKey) return;
 
-    saveCloudConfig({ url, anonKey });
-    cloud.config = { url, anonKey };
-    cloud.client = window.supabase.createClient(url, anonKey);
-    cloud.user = null;
-    renderCloudStatus();
+    const connected = await connectCloud({ url, anonKey }, true);
+    if (!connected) return;
 
-    setStatus(
-      refs.toolsStatus,
-      "DB sukonfiguruota. Dabar spausk Google.",
-      "success"
-    );
+    setStatus(refs.toolsStatus, "DB sukonfiguruota ir prijungta.", "success");
   }
 
   async function onCloudAuth() {
+    if (!window.supabase || !window.supabase.createClient) {
+      setStatus(refs.toolsStatus, "Supabase biblioteka neuzsikrove.", "error");
+      return;
+    }
+
     if (!cloud.client) {
-      setStatus(refs.toolsStatus, "Pirmiausia sukonfiguruok DB.", "error");
-      return;
+      const connected = await connectCloud(loadCloudConfig() || DEFAULT_CLOUD_CONFIG, false);
+      if (!connected) return;
     }
 
-    if (cloud.user) {
-      await cloud.client.auth.signOut();
-      cloud.user = null;
-      renderCloudStatus();
-      setStatus(refs.toolsStatus, "Atsijungta nuo DB.", "success");
-      return;
-    }
+    const connected = await ensureCloudSession();
+    renderCloudStatus();
+    if (!connected) return;
 
-    const redirectTo = `${window.location.origin}${window.location.pathname}`;
-    const { error } = await cloud.client.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo },
-    });
-
-    if (error) {
-      setStatus(
-        refs.toolsStatus,
-        toFriendlyCloudError(error.message, error.code),
-        "error"
-      );
-      return;
-    }
+    await pullCloudState();
+    await pushCloudState();
+    setStatus(refs.toolsStatus, "DB sesija aktyvi ir sinchronizuota.", "success");
   }
 
-  function handleCloudAuthReturnError() {
-    const search = new URLSearchParams(window.location.search);
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-
-    const errorCode =
-      search.get("error_code") ||
-      hash.get("error_code") ||
-      search.get("error") ||
-      hash.get("error");
-
-    const errorMessage =
-      search.get("error_description") ||
-      hash.get("error_description") ||
-      search.get("msg") ||
-      hash.get("msg");
-
-    if (!errorCode && !errorMessage) return;
-
-    setStatus(
-      refs.toolsStatus,
-      toFriendlyCloudError(errorMessage || "OAuth klaida.", errorCode || ""),
-      "error"
-    );
-
-    const cleanUrl = `${window.location.origin}${window.location.pathname}`;
-    window.history.replaceState({}, "", cleanUrl);
-  }
-
-  function toFriendlyCloudError(message, code) {
-    const msg = String(message || "");
-    const errorCode = String(code || "").toLowerCase();
-    const lower = msg.toLowerCase();
+  function toFriendlyAnonError(error) {
+    const message = cleanText(error?.message || "");
+    const lower = message.toLowerCase();
 
     if (
-      errorCode.includes("validation_failed") ||
-      lower.includes("unsupported provider") ||
-      lower.includes("provider is not enabled")
+      lower.includes("anonymous") &&
+      (lower.includes("disabled") || lower.includes("not enabled"))
     ) {
-      const projectRef = extractProjectRef(cloud.config?.url || "");
-      const providerUrl = projectRef
+      const projectRef = extractProjectRef(cloud.config?.url || DEFAULT_CLOUD_CONFIG.url);
+      const settingsUrl = projectRef
         ? `https://supabase.com/dashboard/project/${projectRef}/auth/providers`
         : "Supabase Dashboard -> Authentication -> Providers";
-      return `Google provider neijungtas. Eik i ${providerUrl}, ijunk Google ir issaugok.`;
+      return `Ijunk Anonymous auth: ${settingsUrl} (Anonymous Sign-Ins).`;
     }
 
-    return `Google prisijungimas nepavyko: ${msg || "nezinoma klaida"}`;
+    return `DB prisijungimas nepavyko: ${message || "nezinoma klaida"}`;
   }
 
   function extractProjectRef(projectUrl) {
@@ -673,7 +679,10 @@
       .eq("user_id", cloud.user.id)
       .maybeSingle();
 
-    if (error) return;
+    if (error) {
+      setStatus(refs.toolsStatus, `DB skaitymo klaida: ${error.message}`, "error");
+      return;
+    }
     if (!data || !data.payload || !data.payload.state) return;
 
     const cloudState = sanitizeState(data.payload.state);
@@ -724,20 +733,23 @@
 
     if (!cloud.client) {
       refs.cloudStatus.textContent = "DB: Local";
-      refs.cloudAuthBtn.textContent = "Login";
+      refs.cloudAuthBtn.textContent = "Jungti";
+      refs.cloudAuthBtn.disabled = false;
       refs.cloudSyncBtn.disabled = true;
       return;
     }
 
     if (!cloud.user) {
-      refs.cloudStatus.textContent = "DB: Configured";
-      refs.cloudAuthBtn.textContent = "Google";
+      refs.cloudStatus.textContent = "DB: Connecting...";
+      refs.cloudAuthBtn.textContent = "Bandyti dar";
+      refs.cloudAuthBtn.disabled = false;
       refs.cloudSyncBtn.disabled = true;
       return;
     }
 
     refs.cloudStatus.textContent = cloud.syncing ? "DB: Syncing..." : "DB: Connected";
-    refs.cloudAuthBtn.textContent = "Logout";
+    refs.cloudAuthBtn.textContent = "Atnaujinti";
+    refs.cloudAuthBtn.disabled = false;
     refs.cloudSyncBtn.disabled = false;
   }
 
@@ -1172,7 +1184,9 @@
   }
 
   function saveCloudConfig(config) {
-    localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(config));
+    const safeConfig = sanitizeCloudConfig(config);
+    if (!safeConfig) return;
+    localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(safeConfig));
   }
 
   function loadCloudConfig() {
@@ -1180,13 +1194,18 @@
       const raw = localStorage.getItem(CLOUD_CONFIG_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      const url = cleanText(parsed.url);
-      const anonKey = cleanText(parsed.anonKey);
-      if (!url || !anonKey) return null;
-      return { url, anonKey };
+      return sanitizeCloudConfig(parsed);
     } catch {
       return null;
     }
+  }
+
+  function sanitizeCloudConfig(config) {
+    if (!config || typeof config !== "object") return null;
+    const url = cleanText(config.url);
+    const anonKey = cleanText(config.anonKey);
+    if (!url || !anonKey) return null;
+    return { url, anonKey };
   }
 
   function sanitizeState(input) {

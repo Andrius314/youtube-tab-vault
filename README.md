@@ -1,50 +1,32 @@
 # YouTube Tab Vault
 
-YouTube nuorodu valdymas su kategorijomis, planavimo datomis, perziuros statusu ir uzrasais.
+YouTube nuorodu valdymas su kategorijomis, perziuros data, statusu ir uzrasais.
 
 ## Paleidimas
 
-1. Atidaryk `youtube-tab-vault/index.html`.
+1. Atidaryk `youtube-tab-vault/index.html` arba GitHub Pages versija.
 2. Pridek video nuorodas.
-3. Jei reikia, atsidaryk video tame paciame puslapyje ir rasyk konspekta salia.
+3. Video gali ziureti tame paciame puslapyje ir rasyti uzrasus salia.
 
-## Supabase Free DB (naudoti visur)
+## Supabase (automatiskai prijungta)
 
-1. Susikurk Supabase projekta (free).
-2. `Authentication -> Providers -> Google` ijunk Google provider.
-3. Google Cloud Console susikurk OAuth Client ir i Authorized redirect URI butinai pridiek:
-   - `https://<TAVO_PROJECT_REF>.supabase.co/auth/v1/callback`
-4. `Authentication -> URL Configuration` i `Redirect URLs` pridiek:
-   - `https://andrius314.github.io/youtube-tab-vault/`
-   - (pasirinktinai testui) `https://andrius314.github.io/bandymas3/youtube-tab-vault/`
-5. SQL Editor paleisk:
+- App jau turi sukonfiguruota:
+  - `Project URL`: `https://aykytcqihvxwhvywedpm.supabase.co`
+  - `Publishable key`: `sb_publishable_jFa2Ri2_-7GWB37l9DFeMg_2wm7qWY4`
+- Lenteles ir RLS jau sukurtos (`vault_states`).
+- Prisijungimas vyksta automatiskai per `Anonymous Auth` (be Google).
 
-```sql
-create table if not exists public.vault_states (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  payload jsonb not null,
-  updated_at timestamptz not null default now()
-);
+Jei virsuje matai, kad neprisijungia:
+1. Supabase Dashboard atsidaryk `Authentication -> Providers`.
+2. Ijunk `Anonymous Sign-Ins`.
+3. Puslapyje paspausk `Reconnect`.
 
-alter table public.vault_states enable row level security;
+## Manualus override (jei keisi projekta)
 
-drop policy if exists "own_state_select" on public.vault_states;
-drop policy if exists "own_state_upsert" on public.vault_states;
+1. Paspausk virsuje `DB`.
+2. Ivesk savo `Project URL` ir `Publishable/Anon key`.
+3. App issaugos config localiai ir persijungs.
 
-create policy "own_state_select"
-on public.vault_states
-for select
-to authenticated
-using (auth.uid() = user_id);
+## SQL
 
-create policy "own_state_upsert"
-on public.vault_states
-for all
-to authenticated
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
-```
-
-6. App'e virsuje spausk `DB`, ivesk `Project URL` ir `Anon Key`.
-7. Spausk `Google` ir prisijunk vienu paspaudimu.
-8. Po prisijungimo duomenys sinchronizuojami i DB.
+Naudota migracija yra faile `supabase/vault_states.sql`.
