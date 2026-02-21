@@ -26,6 +26,7 @@ body {
   background: radial-gradient(circle at top right, #1f1f1f, var(--bg) 38%);
   color: var(--ink);
   font-family: Roboto, "Segoe UI", Tahoma, sans-serif;
+  overflow-x: hidden;
 }
 
 h1,
@@ -43,7 +44,7 @@ p {
   justify-content: space-between;
   gap: 18px;
   align-items: center;
-  padding: 14px 18px;
+  padding: 14px clamp(12px, 2vw, 18px);
   background: rgba(15, 15, 15, 0.94);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(8px);
@@ -128,7 +129,7 @@ textarea {
 .app-layout {
   max-width: 1600px;
   margin: 0 auto;
-  padding: 16px;
+  padding: clamp(10px, 2vw, 16px);
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 16px;
@@ -571,13 +572,32 @@ label.full {
   .sidebar {
     position: static;
   }
+
+  .category-nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .cat-btn {
+    min-width: max-content;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
 }
 
 @media (max-width: 700px) {
   .topbar {
+    position: static;
     flex-direction: column;
     align-items: stretch;
     gap: 12px;
+  }
+
+  .brand-wrap p {
+    display: none;
   }
 
   .topbar-tools {
@@ -591,15 +611,44 @@ label.full {
   }
 
   .cloud-tools {
-    justify-content: space-between;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr repeat(3, auto);
+    gap: 6px;
+    align-items: center;
   }
 
   .cloud-status {
     min-width: 0;
   }
 
+  .cloud-tools .btn.tiny {
+    min-width: 56px;
+    text-align: center;
+  }
+
+  .card {
+    border-radius: 14px;
+    padding: 12px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  .row-actions {
+    flex-wrap: wrap;
+  }
+
+  .row-actions .btn,
+  .row-actions .file-btn {
+    width: 100%;
+  }
+
   .video-grid {
     grid-template-columns: 1fr;
+    padding: 10px;
   }
 
   .stats {
@@ -607,6 +656,20 @@ label.full {
   }
 
   .viewer-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .card-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .card-actions {
     grid-template-columns: 1fr;
   }
 }

@@ -147,12 +147,14 @@
 
     const now = new Date().toISOString();
     const current = editingId ? state.entries.find((item) => item.id === editingId) : null;
+    const titleInputValue = cleanText(refs.titleInput.value);
+    const channelInputValue = cleanText(refs.channelInput.value);
 
     let fetched = null;
-    const titleMissing = !cleanText(refs.titleInput.value);
-    const channelMissing = !cleanText(refs.channelInput.value);
-    if (yt && (titleMissing || channelMissing || !current?.thumbnail)) {
+    let autoMetaFailed = false;
+    if (yt) {
       fetched = await fetchYoutubeMeta(candidateUrl);
+      autoMetaFailed = !fetched;
     }
 
     const preferredCategory =
@@ -173,12 +175,12 @@
         cleanText(yt?.thumbnail) ||
         "",
       title:
-        cleanText(refs.titleInput.value) ||
+        titleInputValue ||
         cleanText(fetched?.title) ||
         cleanText(current?.title) ||
         suggestTitle(candidateUrl),
       channel:
-        cleanText(refs.channelInput.value) ||
+        channelInputValue ||
         cleanText(fetched?.channel) ||
         cleanText(current?.channel) ||
         "Nezinomas kanalas",
@@ -209,7 +211,9 @@
     resetForm();
     setStatus(
       refs.formStatus,
-      current ? "Nuoroda atnaujinta." : "Nuoroda issaugota.",
+      `${current ? "Nuoroda atnaujinta." : "Nuoroda issaugota."}${
+        autoMetaFailed ? " YouTube auto info paimti nepavyko." : ""
+      }`,
       "success"
     );
   }
