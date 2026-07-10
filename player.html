@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="lt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Tabula YouTube grotuvas</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body, #player { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #000; }
+    body { color: #fff; font-family: Inter, system-ui, sans-serif; }
+    iframe { width: 100%; height: 100%; border: 0; }
+    .message {
+      position: fixed; inset: 0; display: grid; place-content: center; justify-items: center;
+      padding: 28px; text-align: center; background: #17191e;
+    }
+    .message[hidden] { display: none; }
+    .message strong { font-size: 18px; }
+    .message p { max-width: 620px; margin: 10px auto 18px; color: #bdc4d0; font-size: 13px; line-height: 1.55; }
+    .message a { padding: 11px 16px; border-radius: 10px; color: #fff; background: #ff334f; font-weight: 800; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <div class="message" id="message" hidden>
+    <strong id="messageTitle">Vaizdo įrašo paleisti nepavyko</strong>
+    <p id="messageText">Atidarykite jį tiesiogiai „YouTube“.</p>
+    <a id="youtubeLink" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer">Atidaryti YouTube</a>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const params = new URLSearchParams(location.search);
+      const videoId = String(params.get("v") || "").trim();
+      const start = Math.max(0, Math.min(86400, Math.floor(Number(params.get("start")) || 0)));
+      const validVideoId = /^[a-zA-Z0-9_-]{6,20}$/.test(videoId);
+      const message = document.getElementById("message");
+      const youtubeLink = document.getElementById("youtubeLink");
+      let player = null;
+      let timer = null;
+
+      youtubeLink.href = validVideoId
+        ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}${start ? `&t=${start}s` : ""}`
+        : "https://www.youtube.com/";
+
+      function notify(event, details = {}) {
+        window.parent.postMessage({ source: "tabula-player-host", event, ...details }, "*");
+      }
+
+      function currentState() {
+        if (!player || typeof player.getCurrentTime !== "function") return;
+        const currentTime = Number(player.getCurrentTime());
+        const duration = Number(player.getDuration());
+        notify("time", {
+          currentTime: Number.isFinite(currentTime) ? currentTime : 0,
+          duration: Number.isFinite(duration) ? duration : 0
+        });
+      }
+
+      function showError(code = 0) {
+        clearInterval(timer);
+        document.getElementById("messageTitle").textContent = code
+          ? `YouTube grotuvo klaida ${code}`
+          : "Vaizdo įrašo paleisti nepavyko";
+        message.hidden = false;
+        notify("error", { code });
+      }
+
+      window.onYouTubeIframeAPIReady = () => {
+        if (!validVideoId || !window.YT?.Player) return showError();
+        player = new YT.Player("player", {
+          videoId,
+          playerVars: {
+            autoplay: 1,
+            start,
+            rel: 0,
+            playsinline: 1,
+            modestbranding: 1
+          },
+          events: {
+            onReady: (event) => {
+              notify("ready");
+              currentState();
+              timer = setInterval(currentState, 700);
+              event.target.playVideo();
+            },
+            onStateChange: currentState,
+            onError: (event) => showError(Number(event.data) || 0)
+          }
+        });
+      };
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent || !player) return;
+        let data = event.data;
+        if (typeof data === "string") {
+          try { data = JSON.parse(data); } catch { return; }
+        }
+        if (data?.event !== "command") return;
+        const args = Array.isArray(data.args) ? data.args : [];
+        if (data.func === "seekTo") player.seekTo(Number(args[0]) || 0, true);
+        else if (data.func === "playVideo") player.playVideo();
+        else if (data.func === "getCurrentTime" || data.func === "getDuration") currentState();
+      });
+
+      if (!validVideoId) {
+        showError();
+        return;
+      }
+      const api = document.createElement("script");
+      api.src = "https://www.youtube.com/iframe_api";
+      api.onerror = () => showError();
+      document.head.appendChild(api);
+    })();
+  </script>
+</body>
+</html>
