@@ -102,6 +102,15 @@
         const args = Array.isArray(data.args) ? data.args : [];
         if (data.func === "seekTo") player.seekTo(Number(args[0]) || 0, true);
         else if (data.func === "playVideo") player.playVideo();
+        else if (data.func === "setPlaybackRate") {
+          const requested = Number(args[0]) || 1;
+          const available = typeof player.getAvailablePlaybackRates === "function"
+            ? player.getAvailablePlaybackRates()
+            : [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+          const rate = available.includes(requested) ? requested : 1;
+          player.setPlaybackRate(rate);
+          notify("playbackRate", { playbackRate: rate });
+        }
         else if (data.func === "getCurrentTime" || data.func === "getDuration") currentState();
       });
 
